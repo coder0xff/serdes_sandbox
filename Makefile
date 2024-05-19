@@ -9,3 +9,5 @@ all:
 	touch $(MAIN)
 	RUSTC_BOOTSTRAP=1 cargo rustc -- -Zunpretty=expanded >$(TMP)
 	mv $(TMP) $(MAIN)
+	cargo fmt
+	cargo build
