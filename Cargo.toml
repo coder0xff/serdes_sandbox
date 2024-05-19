@@ -1,5 +1,5 @@
 [package]
-name = "postcard_sandbox"
+name = "serdes_sandbox"
 version = "0.1.0"
 edition = "2021"
 
