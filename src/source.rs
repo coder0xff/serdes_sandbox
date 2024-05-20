@@ -22,8 +22,8 @@ fn main() {
     // println!("{:?}", decoded);
 
     // packed
-    let mut serializer = packed::Serializer::new();
-    point.serialize(&mut serializer).expect("Failed to serialize");
-    let buffer = serializer.into_inner();
+    let buffer = packed::to_bytes(&point).expect("Failed to serialize");
     println!("{:?}", buffer);
+    let decoded: Point = packed::from_bytes(&buffer).expect("Failed to deserialize");
+    println!("{:?}", decoded);
 }

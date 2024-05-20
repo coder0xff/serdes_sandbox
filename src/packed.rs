@@ -30,6 +30,26 @@ impl serde::ser::Error for Error
     }
 }
 
+impl serde::de::Error for Error
+{
+    fn custom<T: std::fmt::Display>(msg: T) -> Self {
+        Self {
+            message: msg.to_string(),
+        }
+    }
+}
+
+const TRUE: u8 = 0xf5;
+const FALSE: u8 = 0xf4;
+const NONE: u8 = 0xf6;
+const SOME: u8 = 0xf7;
+
+pub fn to_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
+    let mut serializer = Serializer::new();
+    value.serialize(&mut serializer)?;
+    Ok(serializer.into_inner())
+}
+
 pub struct Serializer {
     buffer: Vec<u8>,
 }
@@ -62,9 +82,9 @@ impl<'a> serde::Serializer for &'a mut Serializer
 
     fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
         if v {
-            0xf5.serialize(&mut *self)
+            TRUE.serialize(&mut *self)
         } else {
-            0xf4.serialize(&mut *self)
+            FALSE.serialize(&mut *self)
         }
     }
 
@@ -134,14 +154,14 @@ impl<'a> serde::Serializer for &'a mut Serializer
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        0xf6.serialize(&mut *self)
+        NONE.serialize(&mut *self)
     }
 
     fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: serde::Serialize,
     {
-        0xf7.serialize(&mut *self)?;
+        SOME.serialize(&mut *self)?;
         value.serialize(&mut *self)?;
         Ok(())
     }
@@ -342,5 +362,293 @@ impl<'a> serde::ser::SerializeStructVariant for &'a mut Serializer
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         Ok(())
+    }
+}
+
+pub fn from_bytes<'de, T>(bytes: &'de [u8]) -> Result<T, Error>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let boxed: Box<dyn std::io::Read + 'de> = Box::new(bytes);
+    let mut deserializer = Deserializer::new(boxed);
+    T::deserialize(&mut deserializer)
+}
+
+pub fn from_reader<'de, T, De>(reader: De) -> Result<T, Error>
+where
+    T: serde::de::DeserializeOwned,
+    De: std::io::Read + 'de,
+{
+    let boxed: Box<dyn std::io::Read + 'de> = Box::new(reader);
+    let mut deserializer = Deserializer::new(boxed);
+    T::deserialize(&mut deserializer)
+}
+
+pub struct Deserializer<'de>
+{
+    reader: Box<dyn std::io::Read + 'de>,
+}
+
+impl<'de> Deserializer<'de>
+{
+    pub fn new(reader: Box<dyn std::io::Read + 'de>) -> Self {
+        Self {
+            reader,
+        }
+    }
+}
+
+impl<'de> std::io::Read for &mut Deserializer<'de>
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl<'de> serde::Deserializer<'de> for &'de mut Deserializer<'de> {
+    type Error = Error;
+
+    fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        Err(Error::custom("not implemented"))
+    }
+
+    fn deserialize_bool<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        // Get one byte from self.reader
+        let mut bytes = [0; 1];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_bool(match bytes[0] {
+            TRUE => true,
+            FALSE => false,
+            _ => return Err(Error::custom("invalid boolean value")),
+        })
+    }
+
+    fn deserialize_i8<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 1];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_i8(i8::from_be_bytes(bytes))
+    }
+
+    fn deserialize_i16<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 2];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_i16(i16::from_be_bytes(bytes))
+    }
+
+    fn deserialize_i32<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 4];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_i32(i32::from_be_bytes(bytes))
+    }
+
+    fn deserialize_i64<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 8];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_i64(i64::from_be_bytes(bytes))
+    }
+
+    fn deserialize_u8<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 1];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_u8(bytes[0])
+    }
+
+    fn deserialize_u16<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 2];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_u16(u16::from_be_bytes(bytes))
+    }
+
+    fn deserialize_u32<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 4];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_u32(u32::from_be_bytes(bytes))
+    }
+
+    fn deserialize_u64<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 8];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_u64(u64::from_be_bytes(bytes))
+    }
+
+    fn deserialize_f32<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 4];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_f32(f32::from_be_bytes(bytes))
+    }
+
+    fn deserialize_f64<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let mut bytes = [0; 8];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_f64(f64::from_be_bytes(bytes))
+    }
+
+    fn deserialize_char<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let len: u8 = from_reader(&mut *self)?;
+        let mut bytes = vec![0; len as usize];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        let s = String::from_utf8(bytes).map_err(|_| Error::custom("invalid utf-8"))?;
+        let c = s.chars().next().ok_or(Error::custom("empty string"))?;
+        visitor.visit_char(c)
+    }
+
+    fn deserialize_str<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let len: u32 = from_reader(&mut *self)?;
+        let mut bytes = vec![0; len as usize];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        let s = String::from_utf8(bytes).map_err(|_| Error::custom("invalid utf-8"))?;
+        visitor.visit_str(&s)
+    }
+
+    fn deserialize_string<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_str(visitor)
+    }
+
+    fn deserialize_bytes<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let len: u32 = from_reader(&mut *self)?;
+        let mut bytes = vec![0; len as usize];
+        self.reader.read_exact(&mut bytes).map_err(|_| Error::custom("failed to read"))?;
+        visitor.visit_bytes(&bytes)
+    }
+
+    fn deserialize_byte_buf<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_bytes(visitor)
+    }
+
+    fn deserialize_option<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let b: u8 = from_reader(&mut *self)?;
+        match b {
+            NONE => visitor.visit_none(),
+            SOME => visitor.visit_some(self),
+            _ => Err(Error::custom("invalid option value")),
+        }
+    }
+
+    fn deserialize_unit<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_unit()
+    }
+
+    fn deserialize_unit_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_unit()
+    }
+
+    fn deserialize_newtype_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_newtype_struct(self)
+    }
+
+    fn deserialize_seq<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let len: u32 = from_reader(&mut *self)?;
+        visitor.visit_seq(Walk { de: self, len: len as usize })
+    }
+
+    fn deserialize_tuple<V: serde::de::Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_seq(Walk { de: self, len })
+    }
+
+    fn deserialize_tuple_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_seq(Walk { de: self, len })
+    }
+
+    fn deserialize_map<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let len: u32 = from_reader(&mut *self)?;
+        visitor.visit_map(Walk { de: self, len: len as usize })
+    }
+
+    fn deserialize_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_seq(Walk { de: self, len: _fields.len() })
+    }
+
+    fn deserialize_enum<V: serde::de::Visitor<'de>>(self, _name: &'static str, _variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        let variant_index: u32 = from_reader(&mut *self)?;
+        visitor.visit_enum(Walk { de: self, len: 1 })
+    }
+
+    fn deserialize_identifier<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        Err(Error::custom("not implemented"))
+    }
+
+    fn deserialize_ignored_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        Err(Error::custom("not implemented"))
+    }
+}
+
+struct Walk<'de>
+{
+    de: &'de mut Deserializer<'de>,
+    len: usize,
+}
+
+impl<'de> serde::de::SeqAccess<'de> for Walk<'de>
+{
+    type Error = Error;
+
+    fn next_element_seed<T: serde::de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
+        if self.len > 0 {
+            self.len -= 1;
+            let value = seed.deserialize(&mut *self.de)?;
+            Ok(Some(value))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.len)
+    }
+}
+
+impl<'de> serde::de::MapAccess<'de> for Walk<'de>
+{
+    type Error = Error;
+
+    fn next_key_seed<K: serde::de::DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error> {
+        if self.len > 0 {
+            self.len -= 1;
+            let key = seed.deserialize(&mut *self.de)?;
+            Ok(Some(key))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn next_value_seed<V: serde::de::DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Self::Error> {
+        let value = seed.deserialize(&mut *self.de)?;
+        Ok(value)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.len)
+    }
+}
+
+impl<'de> serde::de::EnumAccess<'de> for Walk<'de>
+{
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V: serde::de::DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error> {
+        let value = seed.deserialize(&mut *self.de)?;
+        Ok((value, self))
+    }
+}
+
+impl<'de> serde::de::VariantAccess<'de> for Walk<'de>
+{
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn newtype_variant_seed<T: serde::de::DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Self::Error> {
+        seed.deserialize(&mut *self.de)
+    }
+
+    fn tuple_variant<V: serde::de::Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_seq(Walk { de: self.de, len })
+    }
+
+    fn struct_variant<V: serde::de::Visitor<'de>>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_seq(Walk { de: self.de, len: _fields.len() })
     }
 }
